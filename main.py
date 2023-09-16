@@ -1,8 +1,14 @@
 import os
+from dotenv import load_dotenv
 
 from flask import Flask
+import psycopg2
+
+load_dotenv()
 
 app = Flask(__name__)
+
+conn = psycopg2.connect(database=os.environ.get("DB"), user = os.environ.get("DBUSER"), password = os.environ.get("DBPASS"), host = os.environ.get("DBHOST"), port = os.environ.get("DBPORT"))
 
 
 @app.route("/")

@@ -16,22 +16,29 @@ conn = psycopg2.connect(dbname="discounthub", user=os.environ.get("DBUSER"), pas
 def register_user():
     email = request.args.get("email")
     if email is None:
-        return "Bad request", 400
-
-    print("Register user {}".format(email))
+        return jsonify({"error":"Missing argument"}), 400
 
     cur = conn.cursor()
 
-    cur.execute("""
-        INSERT INTO public.users (email)
-        VALUES (%s)
-        """,
-        (email,)
-    )
+    try:
+        cur.execute("""
+            INSERT INTO public.users (email)
+            VALUES (%s) RETURNING id
+            """,
+            (email,)
+        )
+    except:
+        cur.execute("ROLLBACK")
+        conn.commit()
+        cur.close()
+        return jsonify({"error":"Internal error"}), 500
+
+    id = cur.fetchone()[0]
 
     conn.commit()
     cur.close()
-    return "Ok", 200
+
+    return jsonify({"id":id}), 201
 
 # [GET] /nearby?loc=<location>&r=<radius>
 @app.route("/nearby", methods=["GET"])
@@ -39,23 +46,57 @@ def find_nearby():
     location = request.args.get("loc")
     radius = request.args.get("r")
     if location is None or radius is None:
-        return "Bad request", 400
+        return jsonify({"error":"Missing argument"}), 400
 
-    print("Get discounts {} away from {}".format(radius, location))
+    cur = conn.cursor()
 
-    # TODO get discounts within radius from db
-    return "Ok", 200
+    try:
+        cur.execute("""
+            SELECT id, ST_AsText(ST_FlipCoordinates(location)), requirement, amount, title, description FROM public.discounts
+            WHERE ST_Distance(ST_Transform(ST_SetSRID(ST_FlipCoordinates(ST_GeometryFromText(%s)), 4326), 3857), ST_Transform(public.discounts.location, 3857)) < %s;
+            """,
+            ("POINT({})".format(location), radius)
+        )
+    except:
+        cur.execute("ROLLBACK")
+        conn.commit()
+        cur.close()
+        return jsonify({"error":"Internal error"}), 500
+
+    results = []
+    for r in cur:
+        results.append({"id":r[0], "location":r[1][6:-1], "requirement":r[2], "amount":r[3], "title":r[4], "description":r[5]})
+
+    conn.commit()
+    cur.close()
+    return jsonify(results), 200
 
 # [GET] /discount?id=<id>
 @app.route("/discount", methods=["GET"])
 def get_discount():
     id = request.args.get("id")
     if id is None:
-        return "Bad request", 400
-    print("Get discount with id {}".format(id))
+        return jsonify({"error":"Missing argument"}), 400
 
-    # TODO get discount from db
-    return "Ok", 200
+    cur = conn.cursor()
+
+    try:
+        cur.execute("""
+            SELECT id, ST_AsText(ST_FlipCoordinates(location)), requirement, amount, title, description FROM public.discounts
+            WHERE public.discounts.id = %s
+            """,
+            (id,)
+        )
+    except:
+        cur.execute("ROLLBACK")
+        conn.commit()
+        cur.close()
+        return jsonify({"error":"Internal error"}), 500
+
+    d = cur.fetchone()
+
+    cur.close()
+    return jsonify({"id":d[0], "location":d[1][6:-1], "requirement":d[2], "amount":d[3], "title":d[4], "description":d[5]}), 200
 
 # [POST] /discount?user=<email>&loc=<location>&t=<title>&desc=[description]&req=<requirement>&amnt=<amount>
 @app.route("/discount", methods=["POST"])
@@ -67,31 +108,38 @@ def post_discount():
     requirement = request.args.get("req")
     amount = request.args.get("amnt")
     if email is None or location is None or requirement is None or amount is None or title is None:
-        return "Bad request", 400
-
-    print("User {} uploads discount at {}({}): {} off if you are {}. {}".format(email, title, location, amount, requirement, description))
+        return jsonify({"error":"Missing argument"}), 400
 
     cur = conn.cursor()
 
-    cur.execute("""
-        with rows as (
-            INSERT INTO public.discounts (location, requirement, amount, title, description)
-            VALUES (ST_GeomFromText(%s), %s, %s, %s, %s)
-            RETURNING id
-        )
+    try:
+        cur.execute("""
+            with rows as (
+                INSERT INTO public.discounts (location, requirement, amount, title, description)
+                VALUES (ST_SetSRID(ST_FlipCoordinates(ST_GeomFromText(%s)), 4326), %s, %s, %s, %s)
+                RETURNING id
+            )
 
-        INSERT INTO public.updates (discount_id, user_id, post_date, feedback)
-        VALUES ((SELECT id FROM rows),(
-            SELECT id FROM public.users
-            WHERE public.users.email = %s
-        ),%s,'good')
-        """,
-        ("POINT({})".format(location), requirement, amount, title, description, email, datetime.datetime.now())
-    )
+            INSERT INTO public.updates (discount_id, user_id, post_date, feedback)
+            VALUES ((SELECT id FROM rows),(
+                SELECT id FROM public.users
+                WHERE public.users.email = %s
+            ),%s,'good')
+            RETURNING discount_id
+            """,
+            ("POINT({})".format(location), requirement, amount, title, description, email, datetime.datetime.now())
+        )
+    except:
+        cur.execute("ROLLBACK")
+        conn.commit()
+        cur.close()
+        return jsonify({"error":"Internal error"}), 500
+
+    id = cur.fetchone()[0]
 
     conn.commit()
     cur.close()
-    return "Ok", 200
+    return jsonify({"id":id}), 201
 
 # [POST] /rate?user=<email>&did=<discount_id>&fb=<feedback>
 @app.route("/rate", methods=["POST"])
@@ -100,25 +148,33 @@ def post_feedback():
     discount_id = request.args.get("did")
     feedback = request.args.get("fb")
     if email is None or discount_id is None or feedback is None:
-        return "Bad request", 400
-
-    print("User {} rates discount with id {} as {}".format(email, discount_id, feedback))
+        return jsonify({"error":"Missing argument"}), 400
 
     cur = conn.cursor()
 
-    cur.execute("""
-        INSERT INTO public.updates (discount_id, user_id, post_date, feedback)
-        VALUES (%s,(
-            SELECT id FROM public.users
-            WHERE public.users.email = %s
-        ),%s,%s)
-        """,
-        (discount_id, email, datetime.datetime.now(), feedback)
-    )
+    try:
+        cur.execute("""
+            INSERT INTO public.updates (discount_id, user_id, post_date, feedback)
+            VALUES (%s,(
+                SELECT id FROM public.users
+                WHERE public.users.email = %s
+            ),%s,%s)
+            RETURNING id
+            """,
+            (discount_id, email, datetime.datetime.now(), feedback)
+        )
+    except:
+        cur.execute("ROLLBACK")
+        conn.commit()
+        cur.close()
+        return jsonify({"error":"Internal error"}), 500
+        
+
+    id = cur.fetchone()[0]
 
     conn.commit()
     cur.close()
-    return "Ok", 200
+    return jsonify({"id":id}), 201
 
 
 if __name__ == "__main__":

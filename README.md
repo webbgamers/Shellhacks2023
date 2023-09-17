@@ -1,4 +1,4 @@
-o# Discount Hub API (ShellHacks 2023)
+# Discount Hub API (ShellHacks 2023)
 This program interfaces with a PostgreSQL database with PostGIS to provide information about nearby student discounts. For ShellHacks 2023 this is deployed on GCP Cloud Run. The database is running in GCP CloudSQL. The program itself is an extremely simple Flask/Gunicorn server that responds to the following endpoints.
 
 # Endpoints

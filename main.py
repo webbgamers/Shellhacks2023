@@ -2,7 +2,7 @@ import os
 import datetime
 from dotenv import load_dotenv
 
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, redirect
 import psycopg2
 
 load_dotenv()
@@ -10,6 +10,12 @@ load_dotenv()
 app = Flask(__name__)
 
 conn = psycopg2.connect(dbname="discounthub", user=os.environ.get("DBUSER"), password=os.environ.get("DBPASS"), host=os.environ.get("DBHOST"), port=os.environ.get("DBPORT"))
+
+# Redirect root to GitHub
+@app.route("/")
+def redirect_root():
+    return redirect("https://github.com/webbgamers/discount-hub-api/")
+
 
 # [POST] /register?email=<email>
 @app.route("/register", methods=["POST"])
@@ -92,10 +98,13 @@ def get_discount():
         conn.commit()
         cur.close()
         return jsonify({"error":"Internal error"}), 500
-
+    
     d = cur.fetchone()
 
     cur.close()
+
+    if d is None:
+        return jsonify({"error":"Not found"}), 404
     return jsonify({"id":d[0], "location":d[1][6:-1], "requirement":d[2], "amount":d[3], "title":d[4], "description":d[5]}), 200
 
 # [POST] /discount?user=<email>&loc=<location>&t=<title>&desc=[description]&req=<requirement>&amnt=<amount>

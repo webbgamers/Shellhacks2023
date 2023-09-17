@@ -1,4 +1,5 @@
 import os
+import datetime
 from dotenv import load_dotenv
 
 from flask import Flask, request, jsonify
@@ -19,7 +20,17 @@ def register_user():
 
     print("Register user {}".format(email))
 
-    # TODO add user to db
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO public.users (email)
+        VALUES (%s)
+        """,
+        (email,)
+    )
+
+    conn.commit()
+    cur.close()
     return "Ok", 200
 
 # [GET] /nearby?loc=<location>&r=<radius>
@@ -60,12 +71,30 @@ def post_discount():
 
     print("User {} uploads discount at {}({}): {} off if you are {}. {}".format(email, title, location, amount, requirement, description))
 
-    # TODO add discount to db
-    # TODO add positive update to discount
+    cur = conn.cursor()
+
+    cur.execute("""
+        with rows as (
+            INSERT INTO public.discounts (location, requirement, amount, title, description)
+            VALUES (ST_GeomFromText(%s), %s, %s, %s, %s)
+            RETURNING id
+        )
+
+        INSERT INTO public.updates (discount_id, user_id, post_date, feedback)
+        VALUES ((SELECT id FROM rows),(
+            SELECT id FROM public.users
+            WHERE public.users.email = %s
+        ),%s,'good')
+        """,
+        ("POINT({})".format(location), requirement, amount, title, description, email, datetime.datetime.now())
+    )
+
+    conn.commit()
+    cur.close()
     return "Ok", 200
 
 # [POST] /rate?user=<email>&did=<discount_id>&fb=<feedback>
-@app.route("/rate", methods=["post"])
+@app.route("/rate", methods=["POST"])
 def post_feedback():
     email = request.args.get("user")
     discount_id = request.args.get("did")
@@ -75,7 +104,20 @@ def post_feedback():
 
     print("User {} rates discount with id {} as {}".format(email, discount_id, feedback))
 
-    # TODO add feedback to db
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO public.updates (discount_id, user_id, post_date, feedback)
+        VALUES (%s,(
+            SELECT id FROM public.users
+            WHERE public.users.email = %s
+        ),%s,%s)
+        """,
+        (discount_id, email, datetime.datetime.now(), feedback)
+    )
+
+    conn.commit()
+    cur.close()
     return "Ok", 200
 
 

@@ -3,11 +3,13 @@ import datetime
 from dotenv import load_dotenv
 
 from flask import Flask, request, jsonify, redirect
+from flask_cors import CORS
 import psycopg2
 
 load_dotenv()
 
 app = Flask(__name__)
+cors = CORS(app, resources={"/": {"origins": "find.nearus.xyz"}})
 
 conn = psycopg2.connect(dbname="discounthub", user=os.environ.get("DBUSER"), password=os.environ.get("DBPASS"), host=os.environ.get("DBHOST"), port=os.environ.get("DBPORT"))
 
